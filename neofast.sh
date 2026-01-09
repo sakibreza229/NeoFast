@@ -1,400 +1,537 @@
 #!/bin/bash
-# FastFetch Professional Setup
-# Cross-distro, modular setup script
+# NeoFast Setup - Enhanced Version
+# Safe, cross-distro FastFetch setup with presets
 
 set -euo pipefail
 
-# Source common functions
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/scripts/common.sh"
+# --- COLOR AND STYLE DEFINITIONS ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+NC='\033[0m' 
+BOLD='\033[1m'
+DIM='\033[2m'
 
-# Default configuration
-DEFAULT_CONFIG="compact"
-AVAILABLE_CONFIGS=("compact" "minimal" "full")
-AVAILABLE_LOGOS=("auto" "none" "simple" "custom")
-
-# Print usage
-print_usage() {
-    cat << EOF
-FastFetch Professional Setup v1.0
-
-Usage: $0 [OPTIONS]
-
-Options:
-  -c, --config TYPE     Config type: compact, minimal, full (default: compact)
-  -l, --logo TYPE       Logo type: auto, none, simple, custom (default: auto)
-  -n, --non-interactive Run without prompts
-  -h, --help            Show this help
-  --test-mode           Test mode (no changes)
-  --skip-shell          Skip shell integration
-  --skip-config         Skip config creation
-
-Examples:
-  $0                    # Interactive setup with defaults
-  $0 -c minimal -l none # Minimal config, no logo
-  $0 --non-interactive  # Auto-install with defaults
-EOF
+# --- PRINT FUNCTIONS ---
+print_header() { 
+    echo -e "\n${BLUE}${BOLD}╔══════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}${BOLD}║${NC} ${BOLD}$1${NC}"
+    echo -e "${BLUE}${BOLD}╚══════════════════════════════════════════════╝${NC}"
 }
 
-# Parse arguments
-NON_INTERACTIVE=false
-TEST_MODE=false
-SKIP_SHELL=false
-SKIP_CONFIG=false
-CONFIG_TYPE="$DEFAULT_CONFIG"
-LOGO_TYPE="auto"
+print_section() { 
+    echo -e "\n${CYAN}${BOLD}›${NC} ${BOLD}$1${NC}"
+}
 
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        -c|--config)
-            CONFIG_TYPE="$2"
-            shift 2
-            ;;
-        -l|--logo)
-            LOGO_TYPE="$2"
-            shift 2
-            ;;
-        -n|--non-interactive)
-            NON_INTERACTIVE=true
-            shift
-            ;;
-        --test-mode)
-            TEST_MODE=true
-            shift
-            ;;
-        --skip-shell)
-            SKIP_SHELL=true
-            shift
-            ;;
-        --skip-config)
-            SKIP_CONFIG=true
-            shift
-            ;;
-        -h|--help)
-            print_usage
-            exit 0
-            ;;
-        *)
-            print_error "Unknown option: $1"
-            print_usage
-            exit 1
-            ;;
-    esac
-done
+print_success() { 
+    echo -e "${GREEN}✓${NC} $1"
+}
 
-# Validate config type
-if [[ ! " ${AVAILABLE_CONFIGS[@]} " =~ " ${CONFIG_TYPE} " ]]; then
-    print_error "Invalid config type: $CONFIG_TYPE"
-    print_info "Available: ${AVAILABLE_CONFIGS[*]}"
-    exit 1
-fi
+print_info() { 
+    echo -e "${BLUE}ℹ${NC} $1"
+}
 
-# Validate logo type
-if [[ ! " ${AVAILABLE_LOGOS[@]} " =~ " ${LOGO_TYPE} " ]]; then
-    print_error "Invalid logo type: $LOGO_TYPE"
-    print_info "Available: ${AVAILABLE_LOGOS[*]}"
-    exit 1
-fi
+print_warning() { 
+    echo -e "${YELLOW}⚠${NC} $1"
+}
 
-# Main installation
+print_error() { 
+    echo -e "${RED}✗${NC} $1" >&2
+}
+
+print_step() {
+    echo -e "${MAGENTA}→${NC} $1"
+}
+
+# --- UTILITY FUNCTIONS ---
+command_exists() { 
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Safe prompt function with timeout
+prompt() {
+    local msg="$1"
+    local default="${2:-N}"
+    local timeout="${3:-0}"
+    
+    if [[ "${NON_INTERACTIVE:-false}" = true ]]; then
+        [[ "$default" =~ ^[Yy]$ ]] && return 0 || return 1
+    fi
+    
+    local options="[y/N]"
+    [[ "$default" =~ ^[Yy]$ ]] && options="[Y/n]"
+    
+    if [[ $timeout -gt 0 ]]; then
+        echo -en "${YELLOW}?${NC} $msg $options (auto: $default in ${timeout}s): "
+        if read -r -t "$timeout" response; then
+            [[ "$response" =~ ^[Yy]$ ]]
+        else
+            echo ""
+            [[ "$default" =~ ^[Yy]$ ]]
+        fi
+    else
+        echo -en "${YELLOW}?${NC} $msg $options: "
+        read -r response
+        [[ "$response" =~ ^[Yy]$ ]]
+    fi
+}
+
+# Safe distro detection
+detect_distro() {
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release 2>/dev/null || true
+        DISTRO_ID="${ID:-unknown}"
+        DISTRO_NAME="${PRETTY_NAME:-$NAME}"
+        DISTRO_NAME="${DISTRO_NAME:-Unknown}"
+    elif [[ -f /etc/arch-release ]]; then
+        DISTRO_ID="arch"
+        DISTRO_NAME="Arch Linux"
+    elif [[ -f /etc/debian_version ]]; then
+        DISTRO_ID="debian"
+        DISTRO_NAME="Debian"
+    elif [[ -f /etc/fedora-release ]]; then
+        DISTRO_ID="fedora"
+        DISTRO_NAME="Fedora"
+    elif [[ -f /etc/redhat-release ]]; then
+        DISTRO_ID="rhel"
+        DISTRO_NAME="Red Hat Enterprise Linux"
+    else
+        DISTRO_ID="unknown"
+        DISTRO_NAME="Unknown"
+    fi
+}
+
+# Package manager detection
+detect_pkg_manager() {
+    if command_exists pacman; then
+        PKG_MANAGER="pacman"
+    elif command_exists apt-get; then
+        PKG_MANAGER="apt"
+    elif command_exists dnf; then
+        PKG_MANAGER="dnf"
+    elif command_exists yum; then
+        PKG_MANAGER="yum"
+    elif command_exists zypper; then
+        PKG_MANAGER="zypper"
+    elif command_exists apk; then
+        PKG_MANAGER="apk"
+    elif command_exists xbps-install; then
+        PKG_MANAGER="xbps"
+    else
+        PKG_MANAGER="unknown"
+    fi
+}
+
+# --- WELCOME SCREEN ---
+show_welcome() {
+    clear
+    echo -e "${CYAN}${BOLD}"
+    cat << "EOF"
+╔═══════════════════════════════════════════════════╗
+║ _____   __          __________             _____  ║
+║ ___  | / /_____________  ____/_____ _________  /_ ║
+║ __   |/ /_  _ \  __ \_  /_   _  __ `/_  ___/  __/ ║
+║ _  /|  / /  __/ /_/ /  __/   / /_/ /_(__  )/ /_   ║
+║ /_/ |_/  \___/\____//_/      \__,_/ /____/ \__/   ║ 
+║                                                   ║
+║                 FastFetch Presets                 ║
+╚═══════════════════════════════════════════════════╝
+EOF
+    echo -e "${NC}"
+    print_header "NEOFAST SETUP"
+echo -e "$(tput setaf 6)$(tput bold)A beautiful FastFetch preset for professionals$(tput sgr0)"
+echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    
+    detect_distro
+    detect_pkg_manager
+    
+    echo -e "${DIM}System:${NC} ${BOLD}$DISTRO_NAME${NC}"
+    echo -e "${DIM}Package Manager:${NC} ${BOLD}$PKG_MANAGER${NC}"
+    echo -e "${DIM}Shell:${NC} ${BOLD}$(basename "$SHELL")${NC}"
+    echo -e "${DIM}User:${NC} ${BOLD}$(whoami)${NC}"
+    echo ""
+    echo -e "${CYAN}This script will:${NC}"
+    echo "  1. Install FastFetch (if needed)"
+    echo "  2. Apply your chosen preset"
+    echo "  3. Optionally add to shell startup"
+    echo ""
+}
+
+# --- INSTALLATION FUNCTIONS ---
 install_fastfetch() {
-    print_section "Installing FastFetch"
+    print_step "Checking FastFetch installation..."
     
     if command_exists fastfetch; then
-        print_success "FastFetch is already installed"
+        local version=$(fastfetch --version 2>/dev/null | head -n1 || echo "unknown")
+        print_success "FastFetch is already installed ($version)"
         return 0
     fi
     
-    detect_distro
+    print_step "Installing FastFetch..."
     
-    case "$DISTRO_ID" in
-        arch|manjaro|endeavouros)
-            install_pkg "fastfetch"
+    local sudo_cmd=""
+    [[ "$EUID" -ne 0 ]] && sudo_cmd="sudo"
+    
+    case "$PKG_MANAGER" in
+        pacman)
+            $sudo_cmd pacman -S --needed --noconfirm fastfetch 2>/dev/null || \
+            print_error "Failed to install via pacman" && return 1
             ;;
-        debian|ubuntu|linuxmint|popos)
-            install_pkg "fastfetch"
+        apt)
+            $sudo_cmd apt-get update && \
+            $sudo_cmd apt-get install -y fastfetch 2>/dev/null || \
+            print_error "Failed to install via apt" && return 1
             ;;
-        fedora|rhel|centos)
-            install_pkg "fastfetch"
+        dnf)
+            $sudo_cmd dnf install -y fastfetch 2>/dev/null || \
+            print_error "Failed to install via dnf" && return 1
             ;;
-        opensuse|tumbleweed)
-            install_pkg "fastfetch"
+        yum)
+            $sudo_cmd yum install -y fastfetch 2>/dev/null || \
+            print_error "Failed to install via yum" && return 1
+            ;;
+        zypper)
+            $sudo_cmd zypper install -y fastfetch 2>/dev/null || \
+            print_error "Failed to install via zypper" && return 1
+            ;;
+        apk)
+            $sudo_cmd apk add fastfetch 2>/dev/null || \
+            print_error "Failed to install via apk" && return 1
+            ;;
+        xbps)
+            $sudo_cmd xbps-install -Sy fastfetch 2>/dev/null || \
+            print_error "Failed to install via xbps" && return 1
             ;;
         *)
-            print_warning "Unsupported distro. Trying generic install..."
-            if command_exists curl; then
-                install_from_binary
-            else
-                print_error "Cannot install on this distribution automatically"
-                print_info "Please install FastFetch manually from: https://github.com/fastfetch-cli/fastfetch"
-                exit 1
-            fi
+            install_from_binary
             ;;
     esac
     
-    print_success "FastFetch installed successfully"
+    if command_exists fastfetch; then
+        print_success "FastFetch installed successfully"
+        return 0
+    else
+        print_error "Failed to install FastFetch"
+        print_info "Please install manually: https://github.com/fastfetch-cli/fastfetch"
+        return 1
+    fi
 }
 
-# Install from binary release
 install_from_binary() {
-    local url="https://github.com/fastfetch-cli/fastfetch/releases/latest/download"
-    local bin_dir="/usr/local/bin"
+    print_step "Installing from binary release..."
     
+    local arch=""
     case "$(uname -m)" in
-        x86_64|amd64)
-            url="${url}/fastfetch-linux-amd64.tar.xz"
-            ;;
-        aarch64|arm64)
-            url="${url}/fastfetch-linux-aarch64.tar.xz"
-            ;;
-        *)
-            print_error "Unsupported architecture"
+        x86_64|amd64) arch="amd64" ;;
+        aarch64|arm64) arch="aarch64" ;;
+        *) 
+            print_error "Unsupported architecture: $(uname -m)"
             return 1
             ;;
     esac
     
-    print_info "Downloading FastFetch binary..."
-    sudo curl -L "$url" -o /tmp/fastfetch.tar.xz
-    sudo tar -xJf /tmp/fastfetch.tar.xz -C /tmp
-    sudo mv /tmp/fastfetch "$bin_dir/"
-    sudo chmod +x "$bin_dir/fastfetch"
-    sudo rm -f /tmp/fastfetch.tar.xz
+    local url="https://github.com/fastfetch-cli/fastfetch/releases/latest/download/fastfetch-linux-$arch.tar.xz"
+    local tmp_dir="/tmp/fastfetch-install-$$"
     
-    print_success "FastFetch installed to $bin_dir"
+    mkdir -p "$tmp_dir"
+    
+    if ! command_exists curl && ! command_exists wget; then
+        print_error "Need curl or wget to download binary"
+        return 1
+    fi
+    
+    if command_exists curl; then
+        curl -L "$url" -o "$tmp_dir/fastfetch.tar.xz" || {
+            print_error "Failed to download"
+            rm -rf "$tmp_dir"
+            return 1
+        }
+    else
+        wget -q "$url" -O "$tmp_dir/fastfetch.tar.xz" || {
+            print_error "Failed to download"
+            rm -rf "$tmp_dir"
+            return 1
+        }
+    fi
+    
+    tar -xJf "$tmp_dir/fastfetch.tar.xz" -C "$tmp_dir" 2>/dev/null || {
+        print_error "Failed to extract archive"
+        rm -rf "$tmp_dir"
+        return 1
+    }
+    
+    # Find the binary
+    local binary_path=""
+    if [[ -f "$tmp_dir/fastfetch" ]]; then
+        binary_path="$tmp_dir/fastfetch"
+    elif [[ -d "$tmp_dir/fastfetch-linux-$arch" ]]; then
+        binary_path=$(find "$tmp_dir/fastfetch-linux-$arch" -name "fastfetch" -type f | head -n1)
+    fi
+    
+    if [[ -n "$binary_path" && -f "$binary_path" ]]; then
+        sudo mkdir -p /usr/local/bin
+        sudo cp "$binary_path" /usr/local/bin/fastfetch
+        sudo chmod +x /usr/local/bin/fastfetch
+        print_success "Installed to /usr/local/bin/fastfetch"
+    else
+        print_error "Could not find binary in archive"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    
+    rm -rf "$tmp_dir"
+    return 0
 }
 
-# Setup configuration
-setup_configuration() {
-    if [[ "$SKIP_CONFIG" = true ]]; then
-        print_info "Skipping configuration setup"
+# --- CONFIGURATION FUNCTIONS ---
+select_preset() {
+    print_section "Select Preset"
+    
+    local presets=("compact" "minimal" "full")
+    local descriptions=(
+        "Compact: Balanced layout, fits 80x24 terminals"
+        "Minimal: Basic info only, very clean"
+        "Full: Detailed info with icons and colors"
+    )
+    
+    echo -e "${CYAN}Available presets:${NC}"
+    for i in "${!presets[@]}"; do
+        echo -e "  ${GREEN}$((i+1)))${NC} ${descriptions[$i]}"
+    done
+    
+    if [[ -n "$CONFIG_TYPE" && " ${presets[*]} " =~ " $CONFIG_TYPE " ]]; then
+        SELECTED_PRESET="$CONFIG_TYPE"
+        print_info "Using preset: $SELECTED_PRESET (from command line)"
         return 0
     fi
     
-    print_section "Setting up Configuration"
+    if [[ "$NON_INTERACTIVE" = true ]]; then
+        SELECTED_PRESET="compact"
+        print_info "Auto-selected: compact (non-interactive mode)"
+        return 0
+    fi
+    
+    local choice=""
+    while [[ ! "$choice" =~ ^[1-3]$ ]]; do
+        echo -en "${YELLOW}Select preset (1-3): ${NC}"
+        read -r choice
+        
+        case "$choice" in
+            1) SELECTED_PRESET="compact" ;;
+            2) SELECTED_PRESET="minimal" ;;
+            3) SELECTED_PRESET="full" ;;
+            *) echo -e "${RED}Invalid selection. Please enter 1, 2, or 3.${NC}" ;;
+        esac
+    done
+}
+
+apply_preset() {
+    print_step "Applying '$SELECTED_PRESET' preset..."
     
     local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/fastfetch"
-    local config_file="${config_dir}/config.jsonc"
+    local config_file="$config_dir/config.jsonc"
     
-    # Create backup if exists
+    # Backup existing config
     if [[ -f "$config_file" ]]; then
-        local backup_file="${config_file}.backup.$(date +%Y%m%d_%H%M%S)"
+        local backup_file="$config_file.backup.$(date +%Y%m%d_%H%M%S)"
         cp "$config_file" "$backup_file"
-        print_info "Backed up existing config to: $backup_file"
+        print_info "Backed up existing config to: $(basename "$backup_file")"
     fi
     
     # Create config directory
     mkdir -p "$config_dir"
     
-    # Copy selected config
-    local source_config="${SCRIPT_DIR}/configs/${CONFIG_TYPE}.jsonc"
-    if [[ ! -f "$source_config" ]]; then
-        print_error "Config file not found: $source_config"
-        return 1
+    # Look for preset file
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local preset_file="$script_dir/configs/${SELECTED_PRESET}.jsonc"
+    
+    if [[ -f "$preset_file" ]]; then
+        cp "$preset_file" "$config_file"
+        print_success "Applied preset: $SELECTED_PRESET"
+    else
+        print_error "Preset file not found: $preset_file"
+        print_error "Please make sure the configs/ directory contains ${SELECTED_PRESET}.jsonc"
+        exit 1
     fi
     
-    cp "$source_config" "$config_file"
-    
-    # Setup logo
-    setup_logo "$config_file"
-    
-    print_success "Configuration installed to: $config_file"
+    print_info "Config location: $config_file"
+    print_info "Logo: Using FastFetch's default distro logo"
+    print_info "To customize: Edit $config_file"
 }
 
-# Setup logo
-setup_logo() {
-    local config_file="$1"
-    
-    case "$LOGO_TYPE" in
-        "auto")
-            # Use distro logo
-            print_info "Using automatic distro logo"
-            ;;
-        "none")
-            # Remove logo section
-            sed -i '/"logo":/,/}/d' "$config_file"
-            print_info "Logo disabled"
-            ;;
-        "simple")
-            # Use simple ASCII
-            local logo_file="${SCRIPT_DIR}/logos/default.ascii"
-            if [[ -f "$logo_file" ]]; then
-                # Convert ASCII to JSON format
-                local logo_json=$(python3 -c "
-import json, sys
-with open('$logo_file', 'r') as f:
-    lines = [line.rstrip() for line in f]
-logo_data = {'type': 'ascii', 'lines': lines}
-print(json.dumps(logo_data))
-" 2>/dev/null || echo '{"type": "builtin"}')
-                
-                # Update config
-                python3 -c "
-import json, sys
-with open('$config_file', 'r') as f:
-    config = json.load(f)
-config['logo'] = $logo_json
-with open('$config_file', 'w') as f:
-    json.dump(config, f, indent=2)
-" 2>/dev/null || print_warning "Could not set custom logo"
-            fi
-            print_info "Using simple ASCII logo"
-            ;;
-        "custom")
-            print_info "You can add custom logos to: ${SCRIPT_DIR}/logos/custom/"
-            print_info "Update config manually to use custom image/logo"
-            ;;
-    esac
-}
-
-# Setup shell integration
+# --- SHELL INTEGRATION ---
 setup_shell_integration() {
     if [[ "$SKIP_SHELL" = true ]]; then
-        print_info "Skipping shell integration"
-        return 0
+        print_info "Skipping shell integration (--skip-shell)"
+        return
     fi
     
     print_section "Shell Integration"
     
     local current_shell=$(basename "$SHELL")
-    local config_files=()
+    local config_file=""
     
-    # Detect available shells
-    declare -A shell_configs=(
-        ["bash"]="$HOME/.bashrc"
-        ["zsh"]="$HOME/.zshrc"
-        ["fish"]="$HOME/.config/fish/config.fish"
-    )
-    
-    for shell in "${!shell_configs[@]}"; do
-        if [[ -f "${shell_configs[$shell]}" ]]; then
-            config_files+=("$shell:${shell_configs[$shell]}")
-        fi
-    done
-    
-    if [[ ${#config_files[@]} -eq 0 ]]; then
-        print_warning "No shell config files found"
-        return 0
-    fi
-    
-    if [[ "$NON_INTERACTIVE" = false ]]; then
-        print_info "Available shells:"
-        for item in "${config_files[@]}"; do
-            echo "  - ${item%%:*}"
-        done
-        
-        if confirm "Add FastFetch to shell startup?"; then
-            print_info "Select shells (comma-separated or 'all'):"
-            read -r selected_shells
-            
-            if [[ "$selected_shells" = "all" ]]; then
-                for item in "${config_files[@]}"; do
-                    add_to_shell "${item%%:*}" "${item#*:}"
-                done
-            else
-                IFS=',' read -ra shells <<< "$selected_shells"
-                for shell in "${shells[@]}"; do
-                    shell=$(echo "$shell" | xargs)
-                    for item in "${config_files[@]}"; do
-                        if [[ "${item%%:*}" = "$shell" ]]; then
-                            add_to_shell "$shell" "${item#*:}"
-                        fi
-                    done
-                done
-            fi
-        fi
-    else
-        # Non-interactive: add to current shell only
-        add_to_shell "$current_shell" "${shell_configs[$current_shell]}"
-    fi
-}
-
-# Add FastFetch to shell config
-add_to_shell() {
-    local shell_name="$1"
-    local config_file="$2"
+    case "$current_shell" in
+        bash) config_file="$HOME/.bashrc" ;;
+        zsh) config_file="$HOME/.zshrc" ;;
+        fish) config_file="$HOME/.config/fish/config.fish" ;;
+        *)
+            print_warning "Unsupported shell: $current_shell"
+            print_info "Manually add 'fastfetch' to your shell's config file"
+            return
+            ;;
+    esac
     
     if [[ ! -f "$config_file" ]]; then
+        print_warning "Config file not found: $config_file"
         return
     fi
     
     if grep -q "fastfetch" "$config_file" 2>/dev/null; then
-        print_info "FastFetch already in $shell_name config"
+        print_info "FastFetch already in $current_shell config"
         return
     fi
     
-    {
-        echo ""
-        echo "# FastFetch - System Information"
-        echo "if command -v fastfetch &> /dev/null; then"
-        echo "    fastfetch"
-        echo "fi"
-    } >> "$config_file"
-    
-    print_success "Added to $shell_name"
-}
-
-# Test installation
-test_installation() {
-    print_section "Testing Installation"
-    
-    if command_exists fastfetch; then
-        print_info "Running FastFetch test..."
-        echo ""
+    if prompt "Add FastFetch to $current_shell startup?" "Y"; then
+        {
+            echo ""
+            echo "# FastFetch - System Information Display"
+            echo "if command -v fastfetch &> /dev/null; then"
+            echo "    fastfetch"
+            echo "fi"
+        } >> "$config_file"
         
-        # Run with minimal output for test
-        fastfetch --load-config off --structure title:break:os:kernel:shell:break 2>/dev/null || \
-        fastfetch 2>/dev/null || \
-        print_warning "FastFetch test failed (but installation may still work)"
-        
-        echo ""
-        print_success "Test completed"
+        print_success "Added to $current_shell"
+        print_info "Restart terminal or run: source $config_file"
     else
-        print_error "FastFetch not found after installation"
-        return 1
+        print_info "Skipped shell integration"
     fi
 }
 
-# Main execution
-main() {
-    print_header "FastFetch Professional Setup"
+# --- TEST FUNCTION ---
+test_fastfetch() {
+    print_section "Testing Installation"
     
-    print_info "Distribution: $(detect_distro 2>/dev/null || echo "Unknown")"
-    print_info "Config: $CONFIG_TYPE"
-    print_info "Logo: $LOGO_TYPE"
-    print_info "Interactive: $([[ "$NON_INTERACTIVE" = false ]] && echo "Yes" || echo "No")"
+    if ! command_exists fastfetch; then
+        print_error "FastFetch not found"
+        return 1
+    fi
+    
+    print_step "Running FastFetch..."
     echo ""
+    
+    # Try to run with minimal output
+    if fastfetch --version &>/dev/null; then
+        fastfetch --load-config off --structure os:kernel:shell:break 2>/dev/null || \
+        fastfetch --structure title:os:kernel:break 2>/dev/null || \
+        fastfetch 2>/dev/null || true
+    else
+        fastfetch 2>/dev/null || true
+    fi
+    
+    echo ""
+    print_success "Test completed successfully!"
+}
+
+# --- MAIN EXECUTION ---
+main() {
+    # Parse arguments
+    local CONFIG_TYPE=""
+    local NON_INTERACTIVE=false
+    local TEST_MODE=false
+    local SKIP_SHELL=false
+    
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -c|--config)
+                CONFIG_TYPE="$2"
+                shift 2
+                ;;
+            -n|--non-interactive)
+                NON_INTERACTIVE=true
+                shift
+                ;;
+            --test-mode)
+                TEST_MODE=true
+                shift
+                ;;
+            --skip-shell)
+                SKIP_SHELL=true
+                shift
+                ;;
+            -h|--help)
+                echo "Usage: $0 [OPTIONS]"
+                echo "Options:"
+                echo "  -c, --config TYPE     Preset type: compact, minimal, full"
+                echo "  -n, --non-interactive Run without prompts"
+                echo "  --test-mode           Test mode (no changes)"
+                echo "  --skip-shell          Skip shell integration"
+                echo "  -h, --help            Show this help"
+                exit 0
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                echo "Use -h for help"
+                exit 1
+                ;;
+        esac
+    done
+    
+    # Show welcome screen
+    show_welcome
     
     if [[ "$TEST_MODE" = true ]]; then
         print_warning "TEST MODE - No changes will be made"
-        return 0
-    fi
-    
-    if [[ "$NON_INTERACTIVE" = false ]] && ! confirm "Start installation?"; then
-        print_info "Installation cancelled"
+        print_info "Would install FastFetch and apply preset"
         exit 0
     fi
     
-    # Run installation steps
-    install_fastfetch
-    setup_configuration
+    # Confirm installation
+    if [[ "$NON_INTERACTIVE" = false ]]; then
+        if ! prompt "Start NeoFast setup?" "Y" 10; then
+            print_info "Setup cancelled by user"
+            exit 0
+        fi
+    fi
+    
+    # Installation
+    print_header "Installation Phase"
+    install_fastfetch || exit 1
+    
+    # Configuration
+    print_header "Configuration Phase"
+    select_preset
+    apply_preset
+    
+    # Shell Integration
+    print_header "Shell Integration Phase"
     setup_shell_integration
     
-    if [[ "$NON_INTERACTIVE" = false ]] && confirm "Test installation now?"; then
-        test_installation
+    # Test
+    if prompt "Test FastFetch now?" "Y"; then
+        test_fastfetch
     fi
     
-    print_section "Installation Complete"
-    print_success "FastFetch has been successfully installed!"
-    print_info "Configuration: ~/.config/fastfetch/config.jsonc"
-    print_info "Run: fastfetch"
-    
-    if [[ "$NON_INTERACTIVE" = false ]]; then
-        echo ""
-        print_info "You can customize the configuration file or run:"
-        print_info "  $0 --config full      # Switch to full config"
-        print_info "  $0 --config minimal   # Switch to minimal config"
-    fi
+    # Completion
+    print_header "Setup Complete! 🎉"
+    print_success "NeoFast has been successfully configured!"
+    echo ""
+    print_info "Commands:"
+    echo "  fastfetch           # Run FastFetch"
+    echo "  fastfetch --help    # Show all options"
+    echo ""
+    print_info "Files:"
+    echo "  Config: ~/.config/fastfetch/config.jsonc"
+    echo "  Edit: nano ~/.config/fastfetch/config.jsonc"
+    echo ""
+    print_info "Presets can be changed by running:"
+    echo "  $0 --config [compact|minimal|full]"
+    echo ""
+    echo -e "${DIM}Thank you for using NeoFast!${NC}"
 }
 
-# Run main
+# Run main function
 main "$@"

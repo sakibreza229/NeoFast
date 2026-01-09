@@ -9,7 +9,6 @@
   },
   "display": {
     "separator": " │ ",
-    "color": "auto"
   },
   "modules": [
     "title",
