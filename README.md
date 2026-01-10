@@ -43,7 +43,7 @@ Ensure you have **FastFetch** installed. Because Fastfetch is updated frequently
 Clone the repository or download the script, 
 ```bash
 git clone https://github.com/sakibreza229/awesome-fastfetch.git
-cd awesome-fastfetch-setup
+cd awesome-fastfetch
 ```
 
 Then grant execution permissions:
@@ -58,7 +58,7 @@ Run the script and follow the interactive prompts:
 ./awesome-fastfetch.sh
 ```
 
-### Command Line Options
+### 3. Command Line Options
 
 For automation or power users, you can bypass the menus using flags:
 
