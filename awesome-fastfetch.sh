@@ -92,10 +92,10 @@ fi
     
     # Check if FastFetch is installed
     if ! command_exists fastfetch; then
-        echo -e "${RED}⚠  FastFetch is not installed${NC}"
+        print_error "FastFetch is not installed"
         echo ""
-        echo -e "${YELLOW}This script only configures FastFetch presets.${NC}"
-        echo -e "${YELLOW}Please install FastFetch first, then run this script again.${NC}"
+        print_warning "This script only configures FastFetch presets."
+        print_warning "Please install FastFetch first, then run this script again."
         echo ""
         exit 1
     else
@@ -170,14 +170,14 @@ apply_preset() {
     
     # Look for preset file
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local preset_file="$script_dir/configs/${SELECTED_PRESET}.jsonc"
+    local preset_file="$script_dir/presets/${SELECTED_PRESET}.jsonc"
     
     if [[ -f "$preset_file" ]]; then
         cp "$preset_file" "$config_file"
         print_success "Applied preset: $SELECTED_PRESET"
     else
         print_error "Preset file not found: $preset_file"
-        print_error "Please make sure the configs/ directory contains ${SELECTED_PRESET}.jsonc"
+        print_error "Please make sure the /presets directory contains ${SELECTED_PRESET}.jsonc"
         exit 1
     fi
 }
@@ -218,7 +218,7 @@ setup_shell_integration() {
     if prompt "Add FastFetch to $current_shell startup?" "Y"; then
         {
             echo ""
-            echo "# FastFetch - System Information Display"
+            print_info "# FastFetch - System Information Display"
             echo "if command -v fastfetch &> /dev/null; then"
             echo "    fastfetch"
             echo "fi"
@@ -259,7 +259,7 @@ main() {
                 ;;
             -h|--help)
                 echo "Usage: $0 [OPTIONS]"
-                echo "Options:"
+                print_info "Options:"
                 echo "  -c, --config TYPE     Preset type: compact, minimal, full"
                 echo "  -n, --non-interactive Run without prompts"
                 echo "  --skip-shell          Skip shell integration"
@@ -268,7 +268,7 @@ main() {
                 ;;
             *)
                 print_error "Unknown option: $1"
-                echo "Use -h for help"
+                print_info "Use -h for help"
                 exit 1
                 ;;
         esac
@@ -301,7 +301,7 @@ main() {
     echo -e "  ${GREEN}•${NC} Restart your terminal to apply changes"
     echo -e "  ${GREEN}•${NC} Run ${BOLD}fastfetch${NC}"
     echo -e "  ${GREEN}•${NC} Execute ${DIM}$0 --config [compact|minimal|full]${NC} to switch preset"
-    echo -e "  ${GREEN}•${NC} Edit ${BOLD}~/.config/fastfetch/config.jsonc${NC} to customize"  
+    echo -e "  ${GREEN}•${NC} Edit ${DIM}~/.config/fastfetch/config.jsonc${NC} to customize and change the ascii art"  
     echo ""
     echo -e "${MAGENTA}${BOLD}Enjoy your new beautiful terminal experience!${NC}"
     echo ""
